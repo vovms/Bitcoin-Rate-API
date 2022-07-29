@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -20,12 +21,12 @@ func main() {
 	initialization()
 
 	basePath := "/api"
-
 	http.HandleFunc(basePath+"/", defaultHandler)
-	http.HandleFunc(basePath+"/rate", rateHandler)
-	http.HandleFunc(basePath+"/subscribe", subscribeHandler)
 	http.HandleFunc(basePath+"/allemails", allemailsHandler)
 	http.HandleFunc(basePath+"/deleteallEmails", deleteallEmailsHandler)
+
+	http.HandleFunc(basePath+"/rate", rateHandler)
+	http.HandleFunc(basePath+"/subscribe", subscribeHandler)
 	http.HandleFunc(basePath+"/sendEmails", sendEmailsHandler)
 
 	log.Println("Start HTTP server on port 8080")
@@ -40,26 +41,44 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 
 func rateHandler(w http.ResponseWriter, r *http.Request) {
 
-	log.Println("rateHandler EndPoint")
+	currentRate, err := getCurrentRate()
 
-	fmt.Fprintln(w, getCurrentRate())
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintln(w, "Invalid status value")
+		return
+	}
+
+	fmt.Fprintln(w, currentRate)
+
 }
 
-func getCurrentRate() int {
+func getCurrentRate() (int, error) {
 	url := "https://api.apilayer.com/exchangerates_data/convert?to=UAH&from=BTC&amount=1"
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", url, nil)
 	req.Header.Set("apikey", "azhjGjqJCA5ZQby20BPuyZKnQ0t89BXv")
 
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
+		return 0, err
 	}
-	res, err := client.Do(req)
+	res, erro := client.Do(req)
+
+	if erro != nil {
+		log.Println(erro)
+		return 0, erro
+	}
+
 	if res.Body != nil {
 		defer res.Body.Close()
 	}
 
 	body, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		log.Println(err)
+		return 0, err
+	}
 
 	type resutlStruct struct {
 		Result float64 `json:"result"`
@@ -67,28 +86,51 @@ func getCurrentRate() int {
 
 	var resutlObj resutlStruct
 
-	json.Unmarshal(body, &resutlObj)
+	err = json.Unmarshal(body, &resutlObj)
+	if err != nil {
+		log.Println(err)
+		return 0, err
+	}
 
-	return int(resutlObj.Result)
+	return int(resutlObj.Result), nil
 }
 
 func subscribeHandler(w http.ResponseWriter, r *http.Request) {
 
 	err := r.ParseForm()
-
 	if err != nil {
-		log.Fatal("Fatal Error")
+		log.Println(err)
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintln(w, "Invalid email value")
+		return
+	}
+	email := r.Form.Get("email")
+	if email == "" {
+		log.Println(err)
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintln(w, "Invalid email value")
+		return
 	}
 
-	email := r.Form.Get("email")
+	err = subscribe(email)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintln(w, err)
+		return
+	}
+
+	fmt.Fprintln(w, "E-mail додано")
+
+}
+
+func subscribe(email string) error {
 
 	if !emailsMap[email] {
-		fmt.Fprintln(w, "E-mail додано")
 		emailsMap[email] = true
 		defer writeEmailToFile(email)
+		return nil
 	} else {
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintln(w, "E-mail вже є в базі даних")
+		return errors.New("E-mail вже є в базі даних")
 	}
 }
 
@@ -106,24 +148,31 @@ func deleteallEmailsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func sendEmailsHandler(w http.ResponseWriter, r *http.Request) {
-	sendEmails()
+	err := sendEmails()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintln(w, err)
+		return
+	}
 	w.Write([]byte("E-mailʼи відправлено"))
 }
 
-func sendEmails() {
+func sendEmails() error {
 
-	currentRate := getCurrentRate()
+	currentRate, err := getCurrentRate()
+	if err != nil {
+		return err
+	}
 
 	from := "testkulesha@gmail.com"
 	password := "snhtioacsnediyzx"
-	//toEmailAddress := "kuleshavova@gmail.com"
 
 	mailSlice := make([]string, 0, len(emailsMap))
 	for key, _ := range emailsMap {
 		mailSlice = append(mailSlice, key)
 	}
 
-	to := mailSlice //[]string{toEmailAddress}
+	to := mailSlice
 
 	host := "smtp.gmail.com"
 	port := "587"
@@ -136,11 +185,12 @@ func sendEmails() {
 
 	auth := smtp.PlainAuth("", from, password, host)
 
-	err := smtp.SendMail(address, auth, from, to, message)
+	err = smtp.SendMail(address, auth, from, to, message)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
+	return nil
 }
 
 func fileExists(filename string) bool {
