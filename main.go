@@ -114,7 +114,7 @@ func subscribeHandler(w http.ResponseWriter, r *http.Request) {
 
 	err = subscribe(email)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(http.StatusConflict)
 		fmt.Fprintln(w, err)
 		return
 	}
